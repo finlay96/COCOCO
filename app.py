@@ -27,7 +27,7 @@ parser.add_argument("--pretrain_model_path", type=str, default="../")
 parser.add_argument("--sub_folder", type=str, default="unet")
 args = parser.parse_args()
 
-sam2_checkpoint = "./checkpoints/sam2_hiera_large.pt"
+sam2_checkpoint = "/home/finlay/Shared/pretrained_models/segmentation/sam2/sam2_hiera_large.pt"
 model_cfg = "sam2_hiera_l.yaml"
 
 predictor = build_sam2_video_predictor(model_cfg, sam2_checkpoint)

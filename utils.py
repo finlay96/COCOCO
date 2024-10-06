@@ -48,7 +48,7 @@ def load_model(
     sub_folder: str = "unet",
 
     text_device: str = "cuda:0",
-    unet_device: str = "cuda:1",
+    unet_device: str = "cuda:0",
 
     unet_checkpoint_path: str = "",
     unet_additional_kwargs: Dict = {},

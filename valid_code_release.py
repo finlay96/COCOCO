@@ -40,35 +40,35 @@ from cococo.models.unet import UNet3DConditionModel
 from cococo.pipelines.pipeline_animation_inpainting_cross_attention_vae import AnimationInpaintPipeline
 from cococo.utils.util import save_videos_grid, zero_rank_print
 
+
 def main(
-    name: str,
-    use_wandb: bool,
-    launcher: str,
+        name: str,
+        use_wandb: bool,
+        launcher: str,
 
-    model_path: str,
+        model_path: str,
 
-    prompt: str,
-    negative_prompt: str,
-    guidance_scale: float,
+        prompt: str,
+        negative_prompt: str,
+        guidance_scale: float,
 
-    output_dir: str,
-    pretrained_model_path: str,
-    sub_folder: str = "unet",
+        output_dir: str,
+        pretrained_model_path: str,
+        sub_folder: str = "unet",
 
-    unet_checkpoint_path: str = "",
-    unet_additional_kwargs: Dict = {},
-    noise_scheduler_kwargs = None,
+        unet_checkpoint_path: str = "",
+        unet_additional_kwargs: Dict = {},
+        noise_scheduler_kwargs=None,
 
-    num_workers: int = 32,
+        num_workers: int = 32,
 
-    enable_xformers_memory_efficient_attention: bool = True,
+        enable_xformers_memory_efficient_attention: bool = True,
 
-    image_path: str = '',
-    mask_path: str = '',
-    global_seed: int = 42,
-    is_debug: bool = False,
+        image_path: str = '',
+        mask_path: str = '',
+        global_seed: int = 42,
+        is_debug: bool = False,
 ):
-
     seed = global_seed
     torch.manual_seed(seed)
 
@@ -78,19 +78,19 @@ def main(
     *_, config = inspect.getargvalues(inspect.currentframe())
 
     os.makedirs(output_dir, exist_ok=True)
-    OmegaConf.save(config, os.path.join(output_dir, 'config.yaml'))
+    # OmegaConf.save(config, os.path.join(output_dir, 'config.yaml'))
 
     # Load scheduler, tokenizer and models.
     noise_scheduler = DDIMScheduler(**OmegaConf.to_container(noise_scheduler_kwargs))
 
-    vae            = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae")
-    tokenizer      = CLIPTokenizer.from_pretrained(pretrained_model_path, subfolder="tokenizer")
-    text_encoder   = CLIPTextModel.from_pretrained(pretrained_model_path, subfolder="text_encoder")
+    vae = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae")
+    tokenizer = CLIPTokenizer.from_pretrained(pretrained_model_path, subfolder="tokenizer")
+    text_encoder = CLIPTextModel.from_pretrained(pretrained_model_path, subfolder="text_encoder")
 
     unet = UNet3DConditionModel.from_pretrained_2d(
-            pretrained_model_path, subfolder=sub_folder,
-            unet_additional_kwargs=OmegaConf.to_container(unet_additional_kwargs)
-        )
+        pretrained_model_path, subfolder=sub_folder,
+        unet_additional_kwargs=OmegaConf.to_container(unet_additional_kwargs)
+    )
     state_dict = {}
     for i in range(4):
         state_dict2 = torch.load(f'{model_path}/model_{i}.pth', map_location='cpu')
@@ -113,25 +113,44 @@ def main(
     )
     validation_pipeline.enable_vae_slicing()
 
-    video_path = image_path
-    mask_path = mask_path
-    images = 2*(np.load(video_path)/255.0 - 0.5)
-    masks = np.load(mask_path)/255.0
+    # TODO HACKY FOR NOW
+    height, width = 576, 1024
+    root_dir = Path(
+        "/media/finlay/BigDaddyDrive/Outputs/tracker/object_permanence/track_through_everything/generations/28-09-2024/pipeline_outputs_1000_train_epochs_dtype_float32_500_infer_iters_1_guidance_scale/rubric/dav_ytb/davis_2017/train_rhino/realfill_inputs")
+    from PIL import Image
+    N_FRAMES = 14
+    EVERY_X = 3
+    debug_ims = [np.array(Image.open(f)) for f in sorted(list(root_dir.glob("*.jpg")))][::EVERY_X][:N_FRAMES]
+    im_width = debug_ims[0].shape[1] // 3
+    orig_images = np.stack([Image.fromarray(im[:, im_width:im_width * 2]).resize([width, height]) for im in debug_ims])
+
+    # SOME WEIRD PREPROCESSING
+    images = 2 * (orig_images / 255.0 - 0.5)
+    # orig_masks = np.stack(
+    #     [Image.fromarray(im[:, im_width * 2:]).resize([width, height], Image.NEAREST).convert("L") for im in debug_ims])
+    orig_masks = np.stack(
+        [Image.fromarray(im[:, im_width * 2:]).resize([width, height], Image.NEAREST).convert("L") for im in debug_ims])
+    masks = (orig_masks / 255.0)[..., None]
+
+    # video_path = image_path
+    # mask_path = mask_path
+    # images = 2 * (np.load(video_path) / 255.0 - 0.5)
+    # masks = np.load(mask_path) / 255.0
     pixel_values = torch.tensor(images).to(device=vae.device, dtype=torch.float16)
     test_masks = torch.tensor(masks).to(device=vae.device, dtype=torch.float16)
 
-    height,width = images.shape[-3:-1]
+    height, width = images.shape[-3:-1]
 
-    prefix = 'test_release_'+str(guidance_scale)+'_guidance_scale'
+    prefix = 'test_release_' + str(guidance_scale) + '_guidance_scale'
 
     latents = []
     masks = []
     with torch.no_grad():
         for i in range(len(pixel_values)):
-            pixel_value = rearrange(pixel_values[i:i+1], "f h w c -> f c h w")
-            test_mask = rearrange(test_masks[i:i+1], "f h w c -> f c h w")
+            pixel_value = rearrange(pixel_values[i:i + 1], "f h w c -> f c h w")
+            test_mask = rearrange(test_masks[i:i + 1], "f h w c -> f c h w")
 
-            masked_image = (1-test_mask)*pixel_value
+            masked_image = (1 - test_mask) * pixel_value
             latent = vae.encode(masked_image).latent_dist.sample()
             test_mask = torch.nn.functional.interpolate(test_mask, size=latent.shape[-2:]).cuda()
 
@@ -141,11 +160,11 @@ def main(
             latent = latent * 0.18215
             latents.append(latent)
             masks.append(test_mask)
-    latents = torch.cat(latents,dim=1)
-    test_masks = torch.cat(masks,dim=1)
+    latents = torch.cat(latents, dim=1)
+    test_masks = torch.cat(masks, dim=1)
 
-    latents = latents[None,...]
-    masks = test_masks[None,...]
+    latents = latents[None, ...]
+    masks = test_masks[None, ...]
 
     generator = torch.Generator(device=latents.device)
     generator.manual_seed(0)
@@ -156,63 +175,69 @@ def main(
 
             videos, masked_videos, recon_videos = validation_pipeline(
                 prompt,
-                image = latents,
-                masked_image = latents,
-                masked_latents = None,
-                masks        = masks,
-                generator    = generator,
-                video_length = len(images),
-                negative_prompt = negative_prompt,
-                height       = height,
-                width        = width,
-                num_inference_steps = 50,
-                guidance_scale = guidance_scale
+                image=latents,
+                masked_image=latents,
+                masked_latents=None,
+                masks=masks,
+                generator=generator,
+                video_length=len(images),
+                negative_prompt=negative_prompt,
+                height=height,
+                width=width,
+                num_inference_steps=50,
+                guidance_scale=guidance_scale
             )
 
-        videos = videos.permute(0,2,1,3,4).contiguous()/0.18215
+        videos = videos.permute(0, 2, 1, 3, 4).contiguous() / 0.18215
 
         with torch.no_grad():
             images = []
             for i in range(len(videos[0])):
-                image = vae.decode(videos[0][i:i+1].half()).sample
+                image = vae.decode(videos[0][i:i + 1].half()).sample
                 images.append(image)
-            video = torch.cat(images,dim=0)
-            video = video/2 + 0.5
+            video = torch.cat(images, dim=0)
+            video = video / 2 + 0.5
             video = torch.clamp(video, 0, 1)
-            video = video.permute(0,2,3,1)
+            video = video.permute(0, 2, 3, 1)
 
-        video = 255.0*video.cpu().detach().numpy()
+        video = 255.0 * video.cpu().detach().numpy()
         for i in range(len(video)):
             image = video[i]
             image = np.uint8(image)
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            cv2.imwrite(output_dir+'/'+prefix+'_'+str(step)+'_image_'+str(i)+'.png',image)
+            cv2.imwrite(output_dir + '/' + prefix + '_' + str(step) + '_image_' + str(i) + '.png', image)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config",   type=str, required=True)
-    parser.add_argument("--prompt", type=str, default="")
+    parser.add_argument("--config", type=str, default="./configs/code_release.yaml")  # required=True)
+    parser.add_argument("--prompt", type=str, default="rhino walking")
     parser.add_argument("--negative_prompt", type=str, default="")
-    parser.add_argument("--model_path", type=str, default="../")
-    parser.add_argument("--pretrain_model_path", type=str, default="../")
+    parser.add_argument("--model_path", type=str,
+                        default="/media/finlay/BigDaddyDrive/PretrainedModels/video_generation/cococo")
+    parser.add_argument("--pretrain_model_path", type=str,
+                        default="/media/finlay/BigDaddyDrive/PretrainedModels/huggingface/hub/models--botp--stable-diffusion-v1-5-inpainting/snapshots/069f0782bc637fcbf3310d985b3d0ebffc668535")
     parser.add_argument("--sub_folder", type=str, default="unet")
     parser.add_argument("--guidance_scale", type=float, default=20)
     parser.add_argument("--video_path", type=str, default="")
     args = parser.parse_args()
 
-    name   = Path(args.config).stem
+    name = Path(args.config).stem
     config = OmegaConf.load(args.config)
 
+    out_dir = "/home/finlay/Pictures/cococo"
+
     main(name=name, \
-        launcher=None, \
-        use_wandb=False, \
-        prompt=args.prompt, \
-        model_path=args.model_path, \
-        sub_folder=args.sub_folder, \
-        pretrained_model_path=args.pretrain_model_path, \
-        negative_prompt=args.negative_prompt, \
-        guidance_scale=args.guidance_scale, \
-        image_path=args.video_path+'/images.npy', \
-        mask_path=args.video_path+'/masks.npy', \
-        **config
-        )
+         launcher=None, \
+         use_wandb=False, \
+         prompt=args.prompt, \
+         model_path=args.model_path, \
+         sub_folder=args.sub_folder, \
+         pretrained_model_path=args.pretrain_model_path, \
+         negative_prompt=args.negative_prompt, \
+         guidance_scale=args.guidance_scale, \
+         image_path=args.video_path + '/images.npy', \
+         mask_path=args.video_path + '/masks.npy', \
+         output_dir=out_dir,
+         **config
+         )
